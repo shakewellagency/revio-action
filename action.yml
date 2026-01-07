@@ -1,0 +1,177 @@
+name: 'Revio AI Code Review'
+description: 'Automated AI-powered code review for pull requests. Get instant feedback on code quality, security, and best practices.'
+author: 'Shakewell Agency'
+
+branding:
+  icon: 'code'
+  color: 'purple'
+
+inputs:
+  api_token:
+    description: 'Revio API token (store in secrets as REVIO_API_TOKEN)'
+    required: true
+
+  base_branch:
+    description: 'Base branch to compare against (defaults to PR base or main/master)'
+    required: false
+    default: ''
+
+  fail_on:
+    description: 'Fail the CI check based on review verdict: none, critical, any'
+    required: false
+    default: 'none'
+
+  exclude:
+    description: 'File patterns to exclude from review (comma-separated globs)'
+    required: false
+    default: ''
+
+  include:
+    description: 'File patterns to include in review (comma-separated globs, default: all)'
+    required: false
+    default: ''
+
+  output_format:
+    description: 'Output format: annotations (inline), sarif (security tab), summary (PR comment)'
+    required: false
+    default: 'annotations'
+
+  post_comment:
+    description: 'Post review summary as PR comment (true/false)'
+    required: false
+    default: 'true'
+
+  working_directory:
+    description: 'Working directory for the review (defaults to repository root)'
+    required: false
+    default: '.'
+
+outputs:
+  review_url:
+    description: 'URL to the full review in Revio dashboard'
+    value: ${{ steps.review.outputs.review_url }}
+
+  verdict:
+    description: 'Review verdict: approved, needs_changes, critical'
+    value: ${{ steps.review.outputs.verdict }}
+
+  issues_count:
+    description: 'Total number of issues found'
+    value: ${{ steps.review.outputs.issues_count }}
+
+  critical_count:
+    description: 'Number of critical issues found'
+    value: ${{ steps.review.outputs.critical_count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install Revio CLI
+      shell: bash
+      run: |
+        echo "::group::Installing Revio CLI"
+        npm install -g @revio/cli@latest
+        echo "Revio CLI version: $(revio --version)"
+        echo "::endgroup::"
+
+    - name: Run Revio Review
+      id: review
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        REVIO_API_TOKEN: ${{ inputs.api_token }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -e
+
+        echo "::group::Preparing review"
+
+        # Build command arguments
+        ARGS=""
+
+        # Base branch
+        if [ -n "${{ inputs.base_branch }}" ]; then
+          ARGS="$ARGS --base ${{ inputs.base_branch }}"
+        elif [ -n "${{ github.base_ref }}" ]; then
+          ARGS="$ARGS --base origin/${{ github.base_ref }}"
+        fi
+
+        # Exclude patterns
+        if [ -n "${{ inputs.exclude }}" ]; then
+          ARGS="$ARGS --exclude \"${{ inputs.exclude }}\""
+        fi
+
+        # Include patterns
+        if [ -n "${{ inputs.include }}" ]; then
+          ARGS="$ARGS --include \"${{ inputs.include }}\""
+        fi
+
+        # Output format
+        ARGS="$ARGS --format ${{ inputs.output_format }}"
+
+        # CI mode for proper exit codes
+        ARGS="$ARGS --ci"
+
+        # JSON output for parsing
+        ARGS="$ARGS --json-output /tmp/revio-result.json"
+
+        echo "Running: revio review $ARGS"
+        echo "::endgroup::"
+
+        # Run the review
+        set +e
+        eval "revio review $ARGS"
+        REVIEW_EXIT_CODE=$?
+        set -e
+
+        # Parse results if JSON output exists
+        if [ -f /tmp/revio-result.json ]; then
+          REVIEW_URL=$(jq -r '.review_url // ""' /tmp/revio-result.json)
+          VERDICT=$(jq -r '.verdict // "unknown"' /tmp/revio-result.json)
+          ISSUES_COUNT=$(jq -r '.issues_count // 0' /tmp/revio-result.json)
+          CRITICAL_COUNT=$(jq -r '.critical_count // 0' /tmp/revio-result.json)
+
+          echo "review_url=$REVIEW_URL" >> $GITHUB_OUTPUT
+          echo "verdict=$VERDICT" >> $GITHUB_OUTPUT
+          echo "issues_count=$ISSUES_COUNT" >> $GITHUB_OUTPUT
+          echo "critical_count=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+
+          # Summary
+          echo "## Revio AI Review Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Verdict | **$VERDICT** |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Issues | $ISSUES_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Critical Issues | $CRITICAL_COUNT |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$REVIEW_URL" ]; then
+            echo "| Full Review | [View in Revio]($REVIEW_URL) |" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+
+        # Determine exit code based on fail_on setting
+        FAIL_ON="${{ inputs.fail_on }}"
+
+        if [ "$FAIL_ON" = "none" ]; then
+          exit 0
+        elif [ "$FAIL_ON" = "critical" ] && [ "$CRITICAL_COUNT" -gt 0 ]; then
+          echo "::error::Review found $CRITICAL_COUNT critical issue(s). Failing build."
+          exit 1
+        elif [ "$FAIL_ON" = "any" ] && [ "$ISSUES_COUNT" -gt 0 ]; then
+          echo "::error::Review found $ISSUES_COUNT issue(s). Failing build."
+          exit 1
+        fi
+
+        exit 0
+
+    - name: Upload SARIF (if enabled)
+      if: inputs.output_format == 'sarif' && always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: revio-results.sarif
+      continue-on-error: true

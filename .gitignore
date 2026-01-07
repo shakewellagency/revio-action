@@ -1,0 +1,17 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node (if we add tests later)
+node_modules/
+npm-debug.log
+
+# Test output
+coverage/
+*.log
