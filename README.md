@@ -7,7 +7,7 @@ Automated AI-powered code review for your pull requests. Get instant feedback on
 
 ## Features
 
-- **AI-Powered Analysis** - Leverages Claude AI for intelligent code review
+- **Intelligent Analysis** - Advanced code review powered by Revio
 - **Inline Annotations** - Issues appear directly on changed lines in GitHub
 - **Security Scanning** - SARIF output integrates with GitHub Security tab
 - **Configurable Strictness** - Fail builds on critical issues or any issues
@@ -203,7 +203,7 @@ jobs:
 
 ## Support
 
-- **Documentation:** [docs.revio.shakewell.agency](https://docs.revio.shakewell.agency)
+- **Website:** [revio.shakewell.agency](https://revio.shakewell.agency)
 - **Issues:** [GitHub Issues](https://github.com/shakewellagency/revio-action/issues)
 - **Email:** support@shakewell.agency
 
